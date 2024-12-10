@@ -124,6 +124,22 @@ class Tetris:
                     holes += 1
         return -holes  # Negative reward for holes
 
+    def stack_height(self):
+        height = 0
+        for y in range(BOARD_HEIGHT):
+            if any(self.board[y]):
+                height = BOARD_HEIGHT - y
+                break
+        return height
+
+    def smoothness(self):
+        smooth = 0
+        for y in range(1, BOARD_HEIGHT):
+            for x in range(BOARD_WIDTH):
+                if self.board[y][x] == 1 and self.board[y - 1][x] == 0:
+                    smooth += 1
+        return -smooth
+
     def get_state(self):
         return np.expand_dims(self.board, axis=-1)
 
@@ -155,12 +171,18 @@ class Tetris:
         if lines_cleared > 0:
             reward += 100 * lines_cleared  # High reward for clearing multiple lines
 
-        # Penalize for holes in the board
+        # Penalty for holes in the board
         reward += self.calculate_neatness()  # Negative for more holes
+
+        # Reward for smooth stack (fewer peaks/valleys)
+        reward += self.smoothness()
+
+        # Reward for lower stack height
+        reward -= self.stack_height() * 0.1
 
         # Penalize for game over
         if self.game_over:
-            reward -= 500  # Large penalty for game over
+            reward -= 200  # Large penalty for game over
 
         return reward
 

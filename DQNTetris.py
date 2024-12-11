@@ -172,22 +172,42 @@ class Tetris:
             if all(self.board[i]):
                 lines_cleared += 1
         if lines_cleared > 0:
-            reward += 100 * lines_cleared  # High reward for clearing multiple lines
+            # Reward is based on how many lines are cleared
+            if lines_cleared == 4:
+                reward += 1200  # Tetris (clear 4 lines) gets a big bonus
+            else:
+                reward += 100 * lines_cleared  # Lower rewards for fewer lines cleared
 
         # Penalize for holes in the board
-        reward += self.calculate_neatness()  # Negative for more holes
+        neatness_penalty = self.calculate_neatness()  # Negative for more holes
+        reward += neatness_penalty
 
         # Reward for smooth stack (fewer peaks/valleys)
-        reward += self.smoothness()
+        smoothness_penalty = self.smoothness()  # Negative for jagged stacks
+        reward += smoothness_penalty
 
         # Reward for lower stack height
-        reward -= self.stack_height() * 0.1
+        stack_height_penalty = self.stack_height() * 0.1  # Penalize for tall stacks
+        reward -= stack_height_penalty
 
         # Penalize for game over
         if self.game_over:
             reward -= 500  # Large penalty for game over
 
+        # Reward for piece placement that avoids large gaps or irregularities
+        placement_penalty = self.check_bad_placement()
+        reward -= placement_penalty
+
         return reward
+
+    def check_bad_placement(self):
+        # Check for large gaps left by the current piece placement
+        penalty = 0
+        for x in range(BOARD_WIDTH):
+            if self.board[BOARD_HEIGHT-1][x] == 1:
+                # If the piece blocks the bottom layer, it could create a bad gap
+                penalty += 5
+        return penalty
 
 
 # DQN Model

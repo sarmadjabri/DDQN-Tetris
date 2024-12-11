@@ -1,3 +1,4 @@
+import pygame
 import numpy as np
 import random
 import tensorflow as tf
@@ -5,10 +6,13 @@ from keras.models import Sequential
 from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
+import matplotlib.pyplot as plt
+import json
 
 # Constants
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
+BLOCK_SIZE = 40  # Increased block size for better visualization
 FPS = 60
 NUM_EPISODES = 1000
 REPLAY_MEMORY_SIZE = 2000
@@ -17,7 +21,25 @@ GAMMA = 0.99
 EPSILON_DECAY = 0.995
 MIN_EPSILON = 0.01
 TARGET_UPDATE_FREQUENCY = 10
-MODEL_PATH = "tetris_model.h5"  # Model file to save/load weights
+MODEL_PATH = "tetris_model.h5"
+REWARD_FILE = "episode_rewards.json"
+
+# Initialize Pygame
+pygame.init()
+screen = pygame.display.set_mode((BOARD_WIDTH * BLOCK_SIZE, BOARD_HEIGHT * BLOCK_SIZE))
+pygame.display.set_caption("Tetris AI")
+
+# Define colors
+COLORS = {
+    'I': (0, 255, 255),
+    'J': (0, 0, 255),
+    'L': (255, 165, 0),
+    'O': (255, 255, 0),
+    'S': (0, 255, 0),
+    'T': (128, 0, 128),
+    'Z': (255, 0, 0),
+    'BACKGROUND': (0, 0, 0)
+}
 
 # Define Tetris pieces
 SHAPES = {
@@ -126,6 +148,23 @@ class Tetris:
     def get_state(self):
         return np.expand_dims(self.board, axis=-1)
 
+    def draw_board(self):
+        screen.fill(COLORS['BACKGROUND'])
+
+        # Draw the filled blocks on the board
+        for y in range(BOARD_HEIGHT):
+            for x in range(BOARD_WIDTH):
+                color = COLORS['BACKGROUND'] if self.board[y][x] == 0 else COLORS['I']
+                pygame.draw.rect(screen, color, (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+        # Draw the falling piece
+        for iy, row in enumerate(self.current_piece):
+            for ix, cell in enumerate(row):
+                if cell:
+                    pygame.draw.rect(screen, COLORS['I'], ((self.x + ix) * BLOCK_SIZE, (self.y + iy) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+        pygame.display.flip()
+
     def get_reward(self):
         reward = 0
 
@@ -182,11 +221,33 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# Training function with Double DQN
-def main():
-    # List to store rewards for each episode
-    episode_rewards = []
+# Save rewards to a file
+def save_rewards_to_file(rewards, filename="episode_rewards.json"):
+    with open(filename, 'w') as f:
+        json.dump(rewards, f)
 
+# Load rewards from a file
+def load_rewards_from_file(filename="episode_rewards.json"):
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
+            return json.load(f)
+    return []  # Return an empty list if the file doesn't exist
+
+def plot_metrics(episode_rewards):
+    # Plot total reward per episode
+    plt.figure(figsize=(12, 6))
+    plt.plot(range(1, len(episode_rewards) + 1), episode_rewards)
+    plt.xlabel('Episode')
+    plt.ylabel('Total Reward')
+    plt.title('Reward per Episode')
+    plt.show()
+
+
+def main():
+    # Load previous episode rewards if they exist
+    episode_rewards = load_rewards_from_file(REWARD_FILE)
+    
+    clock = pygame.time.Clock()
     tetris = Tetris()
     input_shape = (BOARD_HEIGHT, BOARD_WIDTH, 1)
     action_size = 4  # 4 actions: rotate, move left, move right, move down
@@ -198,13 +259,12 @@ def main():
     replay_buffer = ReplayBuffer(REPLAY_MEMORY_SIZE)
     epsilon = 1.0
 
-    # Load the model if it exists
     if os.path.exists(MODEL_PATH):
         print("Loading saved model...")
         dqn.load_weights(MODEL_PATH)
         target_dqn.set_weights(dqn.get_weights())
 
-    for episode in range(NUM_EPISODES):
+    for episode in range(len(episode_rewards), NUM_EPISODES):
         tetris = Tetris()
         total_reward = 0
         done = False
@@ -259,6 +319,13 @@ def main():
             if epsilon > MIN_EPSILON:
                 epsilon *= EPSILON_DECAY
 
+            # Render the game state
+            tetris.draw_board()
+
+            # Print rewards for each step
+            print(f"Step Reward: {reward}, Total Reward: {total_reward}")
+            clock.tick(FPS)
+
         print(f"Episode: {episode + 1}, Total Reward: {total_reward}")
 
         # Save the model after each episode (or at a specific interval)
@@ -268,6 +335,13 @@ def main():
 
         # Store total reward per episode
         episode_rewards.append(total_reward)
+
+        # Save rewards to file after each episode
+        save_rewards_to_file(episode_rewards, REWARD_FILE)
+
+    # After training, plot the metrics
+    plot_metrics(episode_rewards)
+
 
 if __name__ == "__main__":
     main()

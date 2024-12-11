@@ -7,6 +7,7 @@ from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
 import matplotlib.pyplot as plt
+import json
 
 # Constants
 BOARD_WIDTH = 10
@@ -21,6 +22,7 @@ EPSILON_DECAY = 0.995
 MIN_EPSILON = 0.01
 TARGET_UPDATE_FREQUENCY = 10
 MODEL_PATH = "tetris_model.h5"
+REWARD_FILE = "episode_rewards.json"
 
 # Initialize Pygame
 pygame.init()
@@ -219,7 +221,18 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# Training function with Double DQN
+# Save rewards to a file
+def save_rewards_to_file(rewards, filename="episode_rewards.json"):
+    with open(filename, 'w') as f:
+        json.dump(rewards, f)
+
+# Load rewards from a file
+def load_rewards_from_file(filename="episode_rewards.json"):
+    if os.path.exists(filename):
+        with open(filename, 'r') as f:
+            return json.load(f)
+    return []  # Return an empty list if the file doesn't exist
+
 def plot_metrics(episode_rewards):
     # Plot total reward per episode
     plt.figure(figsize=(12, 6))
@@ -231,9 +244,9 @@ def plot_metrics(episode_rewards):
 
 
 def main():
-    # List to store rewards for each episode
-    episode_rewards = []
-
+    # Load previous episode rewards if they exist
+    episode_rewards = load_rewards_from_file(REWARD_FILE)
+    
     clock = pygame.time.Clock()
     tetris = Tetris()
     input_shape = (BOARD_HEIGHT, BOARD_WIDTH, 1)
@@ -251,7 +264,7 @@ def main():
         dqn.load_weights(MODEL_PATH)
         target_dqn.set_weights(dqn.get_weights())
 
-    for episode in range(NUM_EPISODES):
+    for episode in range(len(episode_rewards), NUM_EPISODES):
         tetris = Tetris()
         total_reward = 0
         done = False
@@ -322,6 +335,9 @@ def main():
 
         # Store total reward per episode
         episode_rewards.append(total_reward)
+
+        # Save rewards to file after each episode
+        save_rewards_to_file(episode_rewards, REWARD_FILE)
 
     # After training, plot the metrics
     plot_metrics(episode_rewards)

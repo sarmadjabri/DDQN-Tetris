@@ -6,7 +6,6 @@ from keras.models import Sequential
 from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
-import json
 
 # Constants
 BOARD_WIDTH = 10
@@ -21,12 +20,9 @@ EPSILON_DECAY = 0.995
 MIN_EPSILON = 0.01
 TARGET_UPDATE_FREQUENCY = 10
 MODEL_PATH = "tetris_model.h5"
-REWARD_FILE = "episode_rewards.json"
 
 # Initialize Pygame
 pygame.init()
-screen = pygame.display.set_mode((BOARD_WIDTH * BLOCK_SIZE, BOARD_HEIGHT * BLOCK_SIZE))
-pygame.display.set_caption("Tetris AI")
 
 # Define colors
 COLORS = {
@@ -68,6 +64,8 @@ class Tetris:
 
     def rotate(self):
         self.current_piece = np.rot90(self.current_piece)
+        if self.check_collision():  # Undo rotation if it causes a collision
+            self.current_piece = np.rot90(self.current_piece, 3)  # Rotate back 270 degrees
 
     def move_left(self):
         self.x -= 1
@@ -147,23 +145,6 @@ class Tetris:
     def get_state(self):
         return np.expand_dims(self.board, axis=-1)
 
-    def draw_board(self):
-        screen.fill(COLORS['BACKGROUND'])
-
-        # Draw the filled blocks on the board
-        for y in range(BOARD_HEIGHT):
-            for x in range(BOARD_WIDTH):
-                color = COLORS['BACKGROUND'] if self.board[y][x] == 0 else COLORS['I']
-                pygame.draw.rect(screen, color, (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
-
-        # Draw the falling piece
-        for iy, row in enumerate(self.current_piece):
-            for ix, cell in enumerate(row):
-                if cell:
-                    pygame.draw.rect(screen, COLORS['I'], ((self.x + ix) * BLOCK_SIZE, (self.y + iy) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
-
-        pygame.display.flip()
-
     def get_reward(self):
         reward = 0
 
@@ -220,23 +201,11 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# Save rewards to a file
-def save_rewards_to_file(rewards, filename="episode_rewards.json"):
-    with open(filename, 'w') as f:
-        json.dump(rewards, f)
-
-# Load rewards from a file
-def load_rewards_from_file(filename="episode_rewards.json"):
-    if os.path.exists(filename):
-        with open(filename, 'r') as f:
-            return json.load(f)
-    return []  # Return an empty list if the file doesn't exist
-
+# Training function with Double DQN
 def main():
-    # Load previous episode rewards if they exist
-    episode_rewards = load_rewards_from_file(REWARD_FILE)
-    
-    clock = pygame.time.Clock()
+    # List to store rewards for each episode
+    episode_rewards = []
+
     tetris = Tetris()
     input_shape = (BOARD_HEIGHT, BOARD_WIDTH, 1)
     action_size = 4  # 4 actions: rotate, move left, move right, move down
@@ -253,7 +222,7 @@ def main():
         dqn.load_weights(MODEL_PATH)
         target_dqn.set_weights(dqn.get_weights())
 
-    for episode in range(len(episode_rewards), NUM_EPISODES):
+    for episode in range(NUM_EPISODES):
         tetris = Tetris()
         total_reward = 0
         done = False
@@ -308,13 +277,6 @@ def main():
             if epsilon > MIN_EPSILON:
                 epsilon *= EPSILON_DECAY
 
-            # Render the game state
-            tetris.draw_board()
-
-            # Print rewards for each step
-            print(f"Step Reward: {reward}, Total Reward: {total_reward}")
-            clock.tick(FPS)
-
         print(f"Episode: {episode + 1}, Total Reward: {total_reward}")
 
         # Save the model after each episode (or at a specific interval)
@@ -324,9 +286,6 @@ def main():
 
         # Store total reward per episode
         episode_rewards.append(total_reward)
-        
-        # Save rewards to file after every episode
-        save_rewards_to_file(episode_rewards, REWARD_FILE)
 
 
 if __name__ == "__main__":

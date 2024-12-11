@@ -12,10 +12,10 @@ import matplotlib.pyplot as plt
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
 BLOCK_SIZE = 40  # Increased block size for better visualization
-FPS = 60
-NUM_EPISODES = 1000
+FPS = 1
+NUM_EPISODES = 100
 REPLAY_MEMORY_SIZE = 2000
-BATCH_SIZE = 32
+BATCH_SIZE = 2
 GAMMA = 0.99
 EPSILON_DECAY = 0.995
 MIN_EPSILON = 0.01
@@ -99,7 +99,13 @@ class Tetris:
         for iy, row in enumerate(self.current_piece):
             for ix, cell in enumerate(row):
                 if cell:
-                    self.board[self.y + iy][self.x + ix] = 1
+                    # Ensure the index is within bounds before placing the piece
+                    if 0 <= self.y + iy < BOARD_HEIGHT and 0 <= self.x + ix < BOARD_WIDTH:
+                        self.board[self.y + iy][self.x + ix] = 1
+                    else:
+                        print(f"Attempted to place piece out of bounds: ({self.x + ix}, {self.y + iy})")
+                        self.game_over = True
+                        return
         self.clear_lines()
         self.current_piece = self.next_piece
         self.next_piece = self.new_piece()

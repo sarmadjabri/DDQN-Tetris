@@ -193,8 +193,8 @@ class Tetris:
 # DQN Model
 def build_dqn(input_shape, action_size):
     model = Sequential()
-    model.add(Conv2D(32, (3, 3), activation='relu', input_shape=input_shape))
-    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(32, (3, 3), activation='relu', input_shape=input_shape, padding="SAME"))
+    model.add(Conv2D(64, (3, 3), activation='relu', padding="SAME"))
     model.add(Flatten())
     model.add(Dense(64, activation='relu'))
     model.add(Dense(action_size, activation='linear'))

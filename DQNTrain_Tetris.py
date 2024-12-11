@@ -6,7 +6,6 @@ from keras.models import Sequential
 from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
-import matplotlib.pyplot as plt
 import json
 
 # Constants
@@ -233,16 +232,6 @@ def load_rewards_from_file(filename="episode_rewards.json"):
             return json.load(f)
     return []  # Return an empty list if the file doesn't exist
 
-def plot_metrics(episode_rewards):
-    # Plot total reward per episode
-    plt.figure(figsize=(12, 6))
-    plt.plot(range(1, len(episode_rewards) + 1), episode_rewards)
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    plt.title('Reward per Episode')
-    plt.show()
-
-
 def main():
     # Load previous episode rewards if they exist
     episode_rewards = load_rewards_from_file(REWARD_FILE)
@@ -335,12 +324,9 @@ def main():
 
         # Store total reward per episode
         episode_rewards.append(total_reward)
-
-        # Save rewards to file after each episode
+        
+        # Save rewards to file after every episode
         save_rewards_to_file(episode_rewards, REWARD_FILE)
-
-    # After training, plot the metrics
-    plot_metrics(episode_rewards)
 
 
 if __name__ == "__main__":

@@ -225,7 +225,7 @@ class Tetris:
 # DQN Model
 def build_dqn(input_shape, action_size):
     model = Sequential()
-    model.add(Conv2D(32, (3, 3), activation='relu', input_shape=input_shape))
+    model.add(Conv2D(64, (3, 3), activation='relu', input_shape=input_shape))  # Adjusted to 64 filters
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Flatten())
     model.add(Dense(64, activation='relu'))
@@ -238,7 +238,7 @@ def build_dqn(input_shape, action_size):
 
 # Experience Replay Buffer
 class ReplayBuffer:
-    def __init__(self, max_size):
+    def __init__(self, max_size ):
         self.buffer = deque(maxlen=max_size)
 
     def add(self, experience):
@@ -278,7 +278,7 @@ def main():
 
     if os.path.exists(MODEL_PATH):
         print("Loading saved model...")
-        dqn.load_weights(MODEL_PATH)
+        dqn.load_weights(MODEL_PATH, by_name=True, skip_mismatch=True)
         target_dqn.set_weights(dqn.get_weights())
 
     for episode in range(NUM_EPISODES):

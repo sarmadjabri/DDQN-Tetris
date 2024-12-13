@@ -61,7 +61,7 @@ class Tetris:
         self.y = 0
         self.game_over = False
         self.score = 0
-        self.last_action_time = time.time()
+        self.last_action_time = time.time()  # This time tracking is now for tracking how long it's been since last move
 
     def new_piece(self):
         shape = random.choice(list(SHAPES.keys()))
@@ -84,7 +84,7 @@ class Tetris:
         self.y += 1
         if self.check_collision():
             self.y -= 1
-            self.place_piece()
+            self.place_piece()  # Piece is placed when collision is detected
             return False
         return True
 
@@ -194,13 +194,6 @@ class Tetris:
         smoothness_penalty = self.smoothness()
         reward -= smoothness_penalty * 2  # Increased penalty for rough stacks
 
-        # Encourage faster play (time taken for piece placement)
-        time_taken = time.time() - self.last_action_time
-        if time_taken < 0.5:  # Encourage faster placements
-            reward += 10  # Stronger bonus for quick actions
-        elif time_taken > 2:  # Penalize slow placements
-            reward -= 10  # Mild penalty for slow placements
-
         # Reward for placing pieces in good positions (avoiding bad placements)
         penalty = self.check_bad_placement()
         reward -= penalty * 10  # Strong penalty for bad placements
@@ -208,9 +201,6 @@ class Tetris:
         # Game Over penalty (massive penalty for game over)
         if self.game_over:
             reward -= 2000  # Huge penalty for game over
-
-        # Update the action time for the next move
-        self.last_action_time = time.time()
 
         return reward
 

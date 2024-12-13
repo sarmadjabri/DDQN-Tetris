@@ -6,13 +6,14 @@ from keras.models import Sequential
 from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
+import time
 
 # Constants
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
-BLOCK_SIZE = 40  # Increased block size for better visualization
-FPS = 60
-NUM_EPISODES = 1000
+BLOCK_SIZE = 40
+FPS = 10
+NUM_EPISODES = 500
 REPLAY_MEMORY_SIZE = 2000
 BATCH_SIZE = 32
 GAMMA = 0.99
@@ -23,6 +24,8 @@ MODEL_PATH = "tetris_model.h5"
 
 # Initialize Pygame
 pygame.init()
+screen = pygame.display.set_mode((BOARD_WIDTH * BLOCK_SIZE, BOARD_HEIGHT * BLOCK_SIZE))
+pygame.display.set_caption("Tetris AI")
 
 # Define colors
 COLORS = {
@@ -33,7 +36,7 @@ COLORS = {
     'S': (0, 255, 0),
     'T': (128, 0, 128),
     'Z': (255, 0, 0),
-    'BACKGROUND': (0, 0, 0)
+    'BACKGROUND': (0, 0, 0),
 }
 
 # Define Tetris pieces
@@ -57,6 +60,7 @@ class Tetris:
         self.y = 0
         self.game_over = False
         self.score = 0
+        self.last_action_time = time.time()
 
     def new_piece(self):
         shape = random.choice(list(SHAPES.keys()))
@@ -64,8 +68,6 @@ class Tetris:
 
     def rotate(self):
         self.current_piece = np.rot90(self.current_piece)
-        if self.check_collision():  # Undo rotation if it causes a collision
-            self.current_piece = np.rot90(self.current_piece, 3)  # Rotate back 270 degrees
 
     def move_left(self):
         self.x -= 1
@@ -98,7 +100,11 @@ class Tetris:
         for iy, row in enumerate(self.current_piece):
             for ix, cell in enumerate(row):
                 if cell:
-                    self.board[self.y + iy][self.x + ix] = 1
+                    if 0 <= self.y + iy < BOARD_HEIGHT and 0 <= self.x + ix < BOARD_WIDTH:
+                        self.board[self.y + iy][self.x + ix] = 1
+                    else:
+                        self.game_over = True
+                        return
         self.clear_lines()
         self.current_piece = self.next_piece
         self.next_piece = self.new_piece()
@@ -124,7 +130,7 @@ class Tetris:
                     found_block = True
                 elif found_block:
                     holes += 1
-        return -holes  # Negative reward for holes
+        return holes
 
     def stack_height(self):
         height = 0
@@ -140,34 +146,52 @@ class Tetris:
             for x in range(BOARD_WIDTH):
                 if self.board[y][x] == 1 and self.board[y - 1][x] == 0:
                     smooth += 1
-        return -smooth
+        return smooth
 
     def get_state(self):
         return np.expand_dims(self.board, axis=-1)
 
+    def draw_board(self):
+        screen.fill(COLORS['BACKGROUND'])
+
+        for y in range(BOARD_HEIGHT):
+            for x in range(BOARD_WIDTH):
+                color = COLORS['BACKGROUND'] if self.board[y][x] == 0 else COLORS['I']
+                pygame.draw.rect(screen, color, (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+        for iy, row in enumerate(self.current_piece):
+            for ix, cell in enumerate(row):
+                if cell:
+                    pygame.draw.rect(screen, COLORS['I'], ((self.x + ix) * BLOCK_SIZE, (self.y + iy) * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
+
+        pygame.display.flip()
+
     def get_reward(self):
         reward = 0
 
-        # Reward for line clearing
+        # Reward for clearing lines (especially Tetrises)
         lines_cleared = 0
         for i in range(BOARD_HEIGHT):
             if all(self.board[i]):
                 lines_cleared += 1
         if lines_cleared > 0:
-            reward += 100 * lines_cleared  # High reward for clearing multiple lines
+            if lines_cleared == 4:
+                reward += 1500  # Tetris (clear 4 lines) gets a big bonus
+            else:
+                reward += 200 * lines_cleared  # Smaller bonus for fewer lines
 
-        # Penalize for holes in the board
-        reward += self.calculate_neatness()  # Negative for more holes
+        # Penalize for holes (empty spaces with blocks above them)
+        holes = self.calculate_neatness()
+        reward -= holes * 4  # Heavier penalty for holes
 
-        # Reward for smooth stack (fewer peaks/valleys)
-        reward += self.smoothness()
+        # Penalize for stack height (taller stacks are worse)
+        stack_height = self.stack_height()
+        if stack_height > 15:
+            reward -= (stack_height - 15) * 4  # Stronger penalty if stack is too high
 
-        # Reward for lower stack height
-        reward -= self.stack_height() * 0.1
-
-        # Penalize for game over
-        if self.game_over:
-            reward -= 500  # Large penalty for game over
+        # Penalize for stack smoothness (jagged edges are worse)
+        smoothness_penalty = self.smoothness()
+        reward -= smoothness_penalty * 2  # Increased penalty for rough stacks
 
         return reward
 
@@ -175,7 +199,7 @@ class Tetris:
 # DQN Model
 def build_dqn(input_shape, action_size):
     model = Sequential()
-    model.add(Conv2D(32, (3, 3), activation='relu', input_shape=input_shape))
+    model.add(Conv2D(64, (3, 3), activation='relu', input_shape=input_shape))  # Adjusted to 64 filters
     model.add(Conv2D(64, (3, 3), activation='relu'))
     model.add(Flatten())
     model.add(Dense(64, activation='relu'))
@@ -188,7 +212,7 @@ def build_dqn(input_shape, action_size):
 
 # Experience Replay Buffer
 class ReplayBuffer:
-    def __init__(self, max_size):
+    def __init__(self, max_size ):
         self.buffer = deque(maxlen=max_size)
 
     def add(self, experience):
@@ -201,11 +225,11 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# Training function with Double DQN
+# Double DQN training loop
 def main():
-    # List to store rewards for each episode
     episode_rewards = []
 
+    clock = pygame.time.Clock()
     tetris = Tetris()
     input_shape = (BOARD_HEIGHT, BOARD_WIDTH, 1)
     action_size = 4  # 4 actions: rotate, move left, move right, move down
@@ -215,77 +239,80 @@ def main():
     target_dqn.set_weights(dqn.get_weights())
 
     replay_buffer = ReplayBuffer(REPLAY_MEMORY_SIZE)
-    epsilon = 1.0
-
-    if os.path.exists(MODEL_PATH):
-        print("Loading saved model...")
-        dqn.load_weights(MODEL_PATH)
-        target_dqn.set_weights(dqn.get_weights())
+    epsilon = 1.0  # Initial epsilon value for epsilon-greedy policy
+    epsilon_min = MIN_EPSILON
+    epsilon_decay = EPSILON_DECAY
+    gamma = GAMMA  # Discount factor
 
     for episode in range(NUM_EPISODES):
-        tetris = Tetris()
         total_reward = 0
-        done = False
+        tetris = Tetris()  # Reset game at the start of each episode
 
-        while not done:
+        while not tetris.game_over:
             state = tetris.get_state()
-            if np.random.rand() <= epsilon:
-                action = np.random.choice(action_size)  # Explore
+            state = np.expand_dims(state, axis=0)  # Add batch dimension
+
+            if random.random() < epsilon:
+                action = random.randint(0, action_size - 1)  # Random action
             else:
-                q_values = dqn.predict(state.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1))
-                action = np.argmax(q_values)  # Exploit
+                q_values = dqn.predict(state)
+                action = np.argmax(q_values)  # Action with highest Q-value
 
-            # Execute action
-            if action == 0:  # Rotate
+            # Take the chosen action
+            if action == 0:
                 tetris.rotate()
-            elif action == 1:  # Move Left
+            elif action == 1:
                 tetris.move_left()
-            elif action == 2:  # Move Right
+            elif action == 2:
                 tetris.move_right()
-            elif action == 3:  # Move Down
-                done = not tetris.move_down()
+            elif action == 3:
+                tetris.move_down()
 
-            # Get reward and next state
             reward = tetris.get_reward()
+            total_reward += reward
+
             next_state = tetris.get_state()
-            done = tetris.game_over
+            next_state = np.expand_dims(next_state, axis=0)
 
-            # Store in replay buffer
-            replay_buffer.add((state, action, reward, next_state, done))
+            replay_buffer.add((state, action, reward, next_state, tetris.game_over))
 
-            # Sample minibatch from replay buffer
             if replay_buffer.size() > BATCH_SIZE:
-                minibatch = replay_buffer.sample(BATCH_SIZE)
-                for state_batch, action_batch, reward_batch, next_state_batch, done_batch in minibatch:
-                    target = reward_batch
-                    if not done_batch:
-                        next_q_values = target_dqn.predict(next_state_batch.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1))
-                        target = reward_batch + GAMMA * np.max(next_q_values)
+                batch = replay_buffer.sample(BATCH_SIZE)
+                states, actions, rewards, next_states, dones = zip(*batch)
 
-                    target_q_values = dqn.predict(state_batch.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1))
-                    target_q_values[0][action_batch] = target
+                # Prepare data for training
+                states = np.vstack(states)
+                next_states = np.vstack(next_states)
+                actions = np.array(actions)
+                rewards = np.array(rewards)
+                dones = np.array(dones)
 
-                    dqn.fit(state_batch.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1), target_q_values, epochs=1, verbose=0)
+                q_values = dqn.predict(states)
+                next_q_values = target_dqn.predict(next_states)
 
-            # Update target network
+                for i in range(BATCH_SIZE):
+                    if dones[i]:
+                        q_values[i, actions[i]] = rewards[i]
+                    else:
+                        q_values[i, actions[i]] = rewards[i] + gamma * np.max(next_q_values[i])
+
+                dqn.fit(states, q_values, epochs=1, verbose=0)
+
+            if epsilon > epsilon_min:
+                epsilon *= epsilon_decay
+
             if episode % TARGET_UPDATE_FREQUENCY == 0:
                 target_dqn.set_weights(dqn.get_weights())
 
-            total_reward += reward
+            # Print step-level details
+            print(f"Episode: {episode + 1}, Step Reward: {reward}, Total Reward: {total_reward}, Epsilon: {epsilon:.4f}")
 
-            # Decay epsilon
-            if epsilon > MIN_EPSILON:
-                epsilon *= EPSILON_DECAY
+        print(f"Episode {episode + 1} finished. Total Reward: {total_reward}")
 
-        print(f"Episode: {episode + 1}, Total Reward: {total_reward}")
-
-        # Save the model after each episode (or at a specific interval)
-        if (episode + 1) % 10 == 0:
-            print("Saving model...")
-            dqn.save_weights(MODEL_PATH)
-
-        # Store total reward per episode
-        episode_rewards.append(total_reward)
+    # Model saving after all episodes
+    if episode % 10 == 0:
+        print("Saving model...")
+        dqn.save_weights(MODEL_PATH)
 
 
 if __name__ == "__main__":

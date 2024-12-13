@@ -6,16 +6,17 @@ from keras.models import Sequential
 from keras.layers import Dense, Conv2D, Flatten
 from collections import deque
 import os
+import time
 import matplotlib.pyplot as plt
 
 # Constants
 BOARD_WIDTH = 10
 BOARD_HEIGHT = 20
-BLOCK_SIZE = 40  # Increased block size for better visualization
-FPS = 1
-NUM_EPISODES = 100
+BLOCK_SIZE = 40
+FPS = 10
+NUM_EPISODES = 500
 REPLAY_MEMORY_SIZE = 2000
-BATCH_SIZE = 2
+BATCH_SIZE = 32
 GAMMA = 0.99
 EPSILON_DECAY = 0.995
 MIN_EPSILON = 0.01
@@ -36,7 +37,7 @@ COLORS = {
     'S': (0, 255, 0),
     'T': (128, 0, 128),
     'Z': (255, 0, 0),
-    'BACKGROUND': (0, 0, 0)
+    'BACKGROUND': (0, 0, 0),
 }
 
 # Define Tetris pieces
@@ -60,6 +61,7 @@ class Tetris:
         self.y = 0
         self.game_over = False
         self.score = 0
+        self.last_action_time = time.time()
 
     def new_piece(self):
         shape = random.choice(list(SHAPES.keys()))
@@ -99,11 +101,9 @@ class Tetris:
         for iy, row in enumerate(self.current_piece):
             for ix, cell in enumerate(row):
                 if cell:
-                    # Ensure the index is within bounds before placing the piece
                     if 0 <= self.y + iy < BOARD_HEIGHT and 0 <= self.x + ix < BOARD_WIDTH:
                         self.board[self.y + iy][self.x + ix] = 1
                     else:
-                        print(f"Attempted to place piece out of bounds: ({self.x + ix}, {self.y + iy})")
                         self.game_over = True
                         return
         self.clear_lines()
@@ -131,7 +131,7 @@ class Tetris:
                     found_block = True
                 elif found_block:
                     holes += 1
-        return -holes  # Negative reward for holes
+        return holes
 
     def stack_height(self):
         height = 0
@@ -147,7 +147,7 @@ class Tetris:
             for x in range(BOARD_WIDTH):
                 if self.board[y][x] == 1 and self.board[y - 1][x] == 0:
                     smooth += 1
-        return -smooth
+        return smooth
 
     def get_state(self):
         return np.expand_dims(self.board, axis=-1)
@@ -155,13 +155,11 @@ class Tetris:
     def draw_board(self):
         screen.fill(COLORS['BACKGROUND'])
 
-        # Draw the filled blocks on the board
         for y in range(BOARD_HEIGHT):
             for x in range(BOARD_WIDTH):
                 color = COLORS['BACKGROUND'] if self.board[y][x] == 0 else COLORS['I']
                 pygame.draw.rect(screen, color, (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE))
 
-        # Draw the falling piece
         for iy, row in enumerate(self.current_piece):
             for ix, cell in enumerate(row):
                 if cell:
@@ -172,47 +170,55 @@ class Tetris:
     def get_reward(self):
         reward = 0
 
-        # Reward for line clearing
+        # Reward for clearing lines (especially Tetrises)
         lines_cleared = 0
         for i in range(BOARD_HEIGHT):
             if all(self.board[i]):
                 lines_cleared += 1
         if lines_cleared > 0:
-            # Reward is based on how many lines are cleared
             if lines_cleared == 4:
-                reward += 1200  # Tetris (clear 4 lines) gets a big bonus
+                reward += 1500  # Tetris (clear 4 lines) gets a big bonus
             else:
-                reward += 100 * lines_cleared  # Lower rewards for fewer lines cleared
+                reward += 200 * lines_cleared  # Smaller bonus for fewer lines
 
-        # Penalize for holes in the board
-        neatness_penalty = self.calculate_neatness()  # Negative for more holes
-        reward += neatness_penalty
+        # Penalize for holes (empty spaces with blocks above them)
+        holes = self.calculate_neatness()
+        reward -= holes * 4  # Heavier penalty for holes
 
-        # Reward for smooth stack (fewer peaks/valleys)
-        smoothness_penalty = self.smoothness()  # Negative for jagged stacks
-        reward += smoothness_penalty
+        # Penalize for stack height (taller stacks are worse)
+        stack_height = self.stack_height()
+        if stack_height > 15:
+            reward -= (stack_height - 15) * 4  # Stronger penalty if stack is too high
 
-        # Reward for lower stack height
-        stack_height_penalty = self.stack_height() * 0.1  # Penalize for tall stacks
-        reward -= stack_height_penalty
+        # Penalize for stack smoothness (jagged edges are worse)
+        smoothness_penalty = self.smoothness()
+        reward -= smoothness_penalty * 2  # Increased penalty for rough stacks
 
-        # Penalize for game over
+        # Encourage faster play (time taken for piece placement)
+        time_taken = time.time() - self.last_action_time
+        if time_taken < 0.5:  # Encourage faster placements
+            reward += 10  # Stronger bonus for quick actions
+        elif time_taken > 2:  # Penalize slow placements
+            reward -= 10  # Mild penalty for slow placements
+
+        # Reward for placing pieces in good positions (avoiding bad placements)
+        penalty = self.check_bad_placement()
+        reward -= penalty * 10  # Strong penalty for bad placements
+
+        # Game Over penalty (massive penalty for game over)
         if self.game_over:
-            reward -= 500  # Large penalty for game over
+            reward -= 2000  # Huge penalty for game over
 
-        # Reward for piece placement that avoids large gaps or irregularities
-        placement_penalty = self.check_bad_placement()
-        reward -= placement_penalty
+        # Update the action time for the next move
+        self.last_action_time = time.time()
 
         return reward
 
     def check_bad_placement(self):
-        # Check for large gaps left by the current piece placement
         penalty = 0
         for x in range(BOARD_WIDTH):
             if self.board[BOARD_HEIGHT-1][x] == 1:
-                # If the piece blocks the bottom layer, it could create a bad gap
-                penalty += 5
+                penalty += 10  # Penalize if the piece blocks the bottom row
         return penalty
 
 
@@ -245,9 +251,8 @@ class ReplayBuffer:
         return len(self.buffer)
 
 
-# Training function with Double DQN
+# Double DQN training loop
 def plot_metrics(episode_rewards):
-    # Plot total reward per episode
     plt.figure(figsize=(12, 6))
     plt.plot(range(1, len(episode_rewards) + 1), episode_rewards)
     plt.xlabel('Episode')
@@ -257,7 +262,6 @@ def plot_metrics(episode_rewards):
 
 
 def main():
-    # List to store rewards for each episode
     episode_rewards = []
 
     clock = pygame.time.Clock()
@@ -290,7 +294,6 @@ def main():
                 q_values = dqn.predict(state.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1))
                 action = np.argmax(q_values)  # Exploit
 
-            # Execute action
             if action == 0:  # Rotate
                 tetris.rotate()
             elif action == 1:  # Move Left
@@ -300,15 +303,12 @@ def main():
             elif action == 3:  # Move Down
                 done = not tetris.move_down()
 
-            # Get reward and next state
             reward = tetris.get_reward()
             next_state = tetris.get_state()
             done = tetris.game_over
 
-            # Store in replay buffer
             replay_buffer.add((state, action, reward, next_state, done))
 
-            # Sample minibatch from replay buffer
             if replay_buffer.size() > BATCH_SIZE:
                 minibatch = replay_buffer.sample(BATCH_SIZE)
                 for state_batch, action_batch, reward_batch, next_state_batch, done_batch in minibatch:
@@ -322,34 +322,29 @@ def main():
 
                     dqn.fit(state_batch.reshape(1, BOARD_HEIGHT, BOARD_WIDTH, 1), target_q_values, epochs=1, verbose=0)
 
-            # Update target network
             if episode % TARGET_UPDATE_FREQUENCY == 0:
                 target_dqn.set_weights(dqn.get_weights())
 
             total_reward += reward
 
-            # Decay epsilon
+            # Output the current reward, episode, and total reward
+            print(f"Episode: {episode + 1}, Step Reward: {reward}, Total Reward: {total_reward}")
+
             if epsilon > MIN_EPSILON:
                 epsilon *= EPSILON_DECAY
 
-            # Render the game state
             tetris.draw_board()
 
-            # Print rewards for each step
-            print(f"Step Reward: {reward}, Total Reward: {total_reward}")
             clock.tick(FPS)
 
         print(f"Episode: {episode + 1}, Total Reward: {total_reward}")
 
-        # Save the model after each episode (or at a specific interval)
         if (episode + 1) % 10 == 0:
             print("Saving model...")
             dqn.save_weights(MODEL_PATH)
 
-        # Store total reward per episode
         episode_rewards.append(total_reward)
 
-    # After training, plot the metrics
     plot_metrics(episode_rewards)
 
 
